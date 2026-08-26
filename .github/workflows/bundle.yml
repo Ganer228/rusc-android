@@ -4,6 +4,7 @@ on:
     branches:
       - master
       - 'feat/**'
+      - 'mobile/**'
 jobs:
   bundle:
     strategy:
@@ -47,7 +48,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo install cargo-wix
       - run: cargo wix -p rusc --nocapture
       - name: Upload to R2
