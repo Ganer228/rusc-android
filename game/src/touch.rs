@@ -71,6 +71,10 @@ impl TouchHelper {
                 .find(|x| x.1.contains(updated.current_point()))?
                 .0;
 
+            if self.held_buttons.get(&ev.id) == Some(&new_button) {
+                return None;
+            }
+
             let is_held_by_other = self
                 .held_buttons
                 .iter()
@@ -196,5 +200,115 @@ impl TouchHelper {
             held_buttons: HashMap::new(),
             tracked: HashMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kson::BtLane;
+    use winit::event::{DeviceId, ElementState, Touch};
+
+    fn touch(id: u64, phase: TouchPhase, x: f64, y: f64) -> Touch {
+        Touch {
+            device_id: DeviceId::dummy(),
+            phase,
+            location: PhysicalPosition::new(x, y),
+            force: None,
+            id,
+        }
+    }
+
+    fn assert_button_event(
+        event: &UscInputEvent,
+        expected_button: UscButton,
+        expected_state: ElementState,
+    ) {
+        match event {
+            UscInputEvent::Button(button, state, _) => {
+                assert_eq!(*button, expected_button);
+                assert_eq!(*state, expected_state);
+            }
+            other => panic!("expected button event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn same_zone_moves_do_not_repeat_pressed() {
+        let mut helper = TouchHelper::new(Vec2::new(600.0, 400.0));
+        let button = UscButton::BT(BtLane::A);
+
+        let (pressed, release) = helper
+            .update(&touch(1, TouchPhase::Started, 150.0, 250.0))
+            .expect("started touch should press BT-A");
+        assert_button_event(&pressed, button, ElementState::Pressed);
+        assert!(release.is_none());
+
+        assert!(helper
+            .update(&touch(1, TouchPhase::Moved, 160.0, 260.0))
+            .is_none());
+        assert!(helper
+            .update(&touch(1, TouchPhase::Moved, 170.0, 270.0))
+            .is_none());
+
+        let (released, second_event) = helper
+            .update(&touch(1, TouchPhase::Ended, 170.0, 270.0))
+            .expect("ended touch should release BT-A");
+        assert_button_event(&released, button, ElementState::Released);
+        assert!(second_event.is_none());
+    }
+
+    #[test]
+    fn moving_between_zones_preserves_press_then_release_order() {
+        let mut helper = TouchHelper::new(Vec2::new(600.0, 400.0));
+        let button_a = UscButton::BT(BtLane::A);
+        let button_b = UscButton::BT(BtLane::B);
+
+        let (pressed_a, release) = helper
+            .update(&touch(1, TouchPhase::Started, 150.0, 250.0))
+            .expect("started touch should press BT-A");
+        assert_button_event(&pressed_a, button_a, ElementState::Pressed);
+        assert!(release.is_none());
+
+        let (pressed_b, released_a) = helper
+            .update(&touch(1, TouchPhase::Moved, 250.0, 250.0))
+            .expect("moving to BT-B should transition buttons");
+        assert_button_event(&pressed_b, button_b, ElementState::Pressed);
+        assert_button_event(
+            &released_a.expect("BT-A should be released after BT-B is pressed"),
+            button_a,
+            ElementState::Released,
+        );
+
+        let (released_b, second_event) = helper
+            .update(&touch(1, TouchPhase::Ended, 250.0, 250.0))
+            .expect("ended touch should release BT-B");
+        assert_button_event(&released_b, button_b, ElementState::Released);
+        assert!(second_event.is_none());
+    }
+
+    #[test]
+    fn same_button_is_released_only_after_last_touch_ends() {
+        let mut helper = TouchHelper::new(Vec2::new(600.0, 400.0));
+        let button = UscButton::BT(BtLane::A);
+
+        let (pressed, release) = helper
+            .update(&touch(1, TouchPhase::Started, 150.0, 250.0))
+            .expect("first touch should press BT-A");
+        assert_button_event(&pressed, button, ElementState::Pressed);
+        assert!(release.is_none());
+
+        assert!(helper
+            .update(&touch(2, TouchPhase::Started, 160.0, 260.0))
+            .is_none());
+        assert!(helper
+            .update(&touch(1, TouchPhase::Ended, 150.0, 250.0))
+            .is_none());
+
+        let (released, second_event) = helper
+            .update(&touch(2, TouchPhase::Ended, 160.0, 260.0))
+            .expect("last touch should release BT-A");
+        assert_button_event(&released, button, ElementState::Released);
+        assert!(second_event.is_none());
     }
 }
