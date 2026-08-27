@@ -65,11 +65,27 @@ impl TouchHelper {
                 .and_modify(|x| x.update(ev.location))
                 .or_insert(TouchTracker::new(ev.location));
 
-            let new_button = *self
+            let new_button = self
                 .button_areas
                 .iter()
-                .find(|x| x.1.contains(updated.current_point()))?
-                .0;
+                .find(|x| x.1.contains(updated.current_point()))
+                .map(|x| *x.0);
+
+            let Some(new_button) = new_button else {
+                let was_held = self.held_buttons.remove(&ev.id)?;
+                if self.held_buttons.values().any(|button| *button == was_held) {
+                    return None;
+                }
+
+                return Some((
+                    UscInputEvent::Button(
+                        was_held,
+                        winit::event::ElementState::Released,
+                        SystemTime::now(),
+                    ),
+                    None,
+                ));
+            };
 
             if self.held_buttons.get(&ev.id) == Some(&new_button) {
                 return None;
@@ -303,6 +319,106 @@ mod tests {
             .is_none());
         assert!(helper
             .update(&touch(1, TouchPhase::Ended, 150.0, 250.0))
+            .is_none());
+
+        let (released, second_event) = helper
+            .update(&touch(2, TouchPhase::Ended, 160.0, 260.0))
+            .expect("last touch should release BT-A");
+        assert_button_event(&released, button, ElementState::Released);
+        assert!(second_event.is_none());
+    }
+
+    #[test]
+    fn moving_from_button_to_gap_releases_button() {
+        let mut helper = TouchHelper::new(Vec2::new(600.0, 400.0));
+        let button = UscButton::BT(BtLane::A);
+
+        let (pressed, release) = helper
+            .update(&touch(1, TouchPhase::Started, 150.0, 250.0))
+            .expect("started touch should press BT-A");
+        assert_button_event(&pressed, button, ElementState::Pressed);
+        assert!(release.is_none());
+
+        let (released, second_event) = helper
+            .update(&touch(1, TouchPhase::Moved, 450.0, 150.0))
+            .expect("moving into the gap should release BT-A");
+        assert_button_event(&released, button, ElementState::Released);
+        assert!(second_event.is_none());
+
+        assert!(helper
+            .update(&touch(1, TouchPhase::Ended, 450.0, 150.0))
+            .is_none());
+    }
+
+    #[test]
+    fn moving_from_button_through_gap_to_button_updates_state() {
+        let mut helper = TouchHelper::new(Vec2::new(600.0, 400.0));
+        let button_a = UscButton::BT(BtLane::A);
+        let button_b = UscButton::BT(BtLane::B);
+
+        let (pressed_a, _) = helper
+            .update(&touch(1, TouchPhase::Started, 150.0, 250.0))
+            .expect("started touch should press BT-A");
+        assert_button_event(&pressed_a, button_a, ElementState::Pressed);
+
+        let (released_a, _) = helper
+            .update(&touch(1, TouchPhase::Moved, 450.0, 150.0))
+            .expect("moving into the gap should release BT-A");
+        assert_button_event(&released_a, button_a, ElementState::Released);
+
+        let (pressed_b, release) = helper
+            .update(&touch(1, TouchPhase::Moved, 250.0, 250.0))
+            .expect("moving from the gap should press BT-B");
+        assert_button_event(&pressed_b, button_b, ElementState::Pressed);
+        assert!(release.is_none());
+
+        let (released_b, second_event) = helper
+            .update(&touch(1, TouchPhase::Ended, 250.0, 250.0))
+            .expect("ended touch should release BT-B");
+        assert_button_event(&released_b, button_b, ElementState::Released);
+        assert!(second_event.is_none());
+    }
+
+    #[test]
+    fn touch_started_in_gap_can_move_to_button() {
+        let mut helper = TouchHelper::new(Vec2::new(600.0, 400.0));
+        let button_b = UscButton::BT(BtLane::B);
+
+        assert!(helper
+            .update(&touch(1, TouchPhase::Started, 450.0, 150.0))
+            .is_none());
+
+        let (pressed_b, release) = helper
+            .update(&touch(1, TouchPhase::Moved, 250.0, 250.0))
+            .expect("moving from the gap should press BT-B");
+        assert_button_event(&pressed_b, button_b, ElementState::Pressed);
+        assert!(release.is_none());
+
+        let (released_b, second_event) = helper
+            .update(&touch(1, TouchPhase::Ended, 250.0, 250.0))
+            .expect("ended touch should release BT-B");
+        assert_button_event(&released_b, button_b, ElementState::Released);
+        assert!(second_event.is_none());
+    }
+
+    #[test]
+    fn moving_one_of_two_touches_to_gap_keeps_button_held() {
+        let mut helper = TouchHelper::new(Vec2::new(600.0, 400.0));
+        let button = UscButton::BT(BtLane::A);
+
+        let (pressed, _) = helper
+            .update(&touch(1, TouchPhase::Started, 150.0, 250.0))
+            .expect("first touch should press BT-A");
+        assert_button_event(&pressed, button, ElementState::Pressed);
+        assert!(helper
+            .update(&touch(2, TouchPhase::Started, 160.0, 260.0))
+            .is_none());
+
+        assert!(helper
+            .update(&touch(1, TouchPhase::Moved, 450.0, 150.0))
+            .is_none());
+        assert!(helper
+            .update(&touch(1, TouchPhase::Ended, 450.0, 150.0))
             .is_none());
 
         let (released, second_event) = helper
