@@ -16,6 +16,7 @@ mod lighting;
 mod lua_http;
 mod lua_service;
 mod main_menu;
+mod mobile_layout;
 mod multiplayer;
 mod results;
 mod scene;
