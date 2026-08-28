@@ -4,6 +4,7 @@ on:
     branches:
       - master
       - 'feat/**'
+      - 'mobile/**'
 jobs:
   bundle:
     strategy:
