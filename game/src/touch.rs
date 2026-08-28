@@ -3,7 +3,10 @@ use std::{collections::HashMap, time::SystemTime};
 use egui::accesskit::{Point, Rect, Vec2};
 use winit::{dpi::PhysicalPosition, event::TouchPhase};
 
-use crate::button_codes::{UscButton, UscInputEvent};
+use crate::{
+    button_codes::{UscButton, UscInputEvent},
+    mobile_layout::MobileLayout,
+};
 
 #[derive(Debug)]
 pub struct TouchHelper {
@@ -123,92 +126,11 @@ impl TouchHelper {
         }
     }
     pub fn new(screen_size: Vec2) -> Self {
-        /*
-           -----------------
-           |  |  back?  |  |
-           |  |         |  |
-           |LL|---------|RL|
-           |  |  start  |  |
-           |  |         |  |
-           |--|---------|--|
-           |  |a  b c  d|  |
-           |LR|         |RR|
-           |  |---------|  |
-           |  | fx | fx |  |
-           |  |  L |  R |  |
-           -----------------
-        */
+        Self::with_layout(screen_size, &MobileLayout::legacy())
+    }
 
-        let col_width = screen_size.x / 6.0;
-        let row_height = screen_size.y / 4.0;
-
-        let mut button_areas: HashMap<UscButton, Rect> = HashMap::new();
-
-        button_areas.insert(
-            UscButton::Laser(kson::Side::Left, kson::Side::Left),
-            Rect::new(0.0, 0.0, col_width, row_height * 2.0),
-        );
-
-        button_areas.insert(
-            UscButton::Laser(kson::Side::Left, kson::Side::Right),
-            Rect::new(0.0, row_height * 2.0, col_width, row_height * 4.0),
-        );
-
-        button_areas.insert(
-            UscButton::Laser(kson::Side::Right, kson::Side::Left),
-            Rect::new(col_width * 5.0, 0.0, col_width * 6.0, row_height * 2.0),
-        );
-
-        button_areas.insert(
-            UscButton::Laser(kson::Side::Right, kson::Side::Right),
-            Rect::new(
-                col_width * 5.0,
-                row_height * 2.0,
-                col_width * 6.0,
-                row_height * 4.0,
-            ),
-        );
-
-        button_areas.insert(
-            UscButton::Back,
-            Rect::new(col_width, 0.0, col_width * 5.0, row_height),
-        );
-
-        button_areas.insert(
-            UscButton::Start,
-            Rect::new(col_width, row_height, col_width * 4.0, row_height * 2.0),
-        );
-
-        for i in 0..4usize {
-            button_areas.insert(
-                UscButton::BT(i.try_into().unwrap()),
-                Rect::new(
-                    col_width + col_width * i as f64,
-                    row_height * 2.0,
-                    col_width * 2.0 + col_width * i as f64,
-                    row_height * 3.0,
-                ),
-            );
-        }
-
-        button_areas.insert(
-            UscButton::FX(kson::Side::Left),
-            Rect::new(
-                col_width,
-                row_height * 3.0,
-                col_width * 3.0,
-                row_height * 4.0,
-            ),
-        );
-        button_areas.insert(
-            UscButton::FX(kson::Side::Right),
-            Rect::new(
-                col_width * 3.0,
-                row_height * 3.0,
-                col_width * 5.0,
-                row_height * 4.0,
-            ),
-        );
+    fn with_layout(screen_size: Vec2, layout: &MobileLayout) -> Self {
+        let button_areas = layout.resolve(screen_size).button_areas;
 
         Self {
             screen_size,
@@ -426,5 +348,69 @@ mod tests {
             .expect("last touch should release BT-A");
         assert_button_event(&released, button, ElementState::Released);
         assert!(second_event.is_none());
+    }
+
+    #[test]
+    fn legacy_zone_centers_map_to_expected_buttons() {
+        let screen_size = Vec2::new(600.0, 400.0);
+        let cases = [
+            (
+                UscButton::Laser(kson::Side::Left, kson::Side::Left),
+                50.0,
+                100.0,
+            ),
+            (
+                UscButton::Laser(kson::Side::Left, kson::Side::Right),
+                50.0,
+                300.0,
+            ),
+            (
+                UscButton::Laser(kson::Side::Right, kson::Side::Left),
+                550.0,
+                100.0,
+            ),
+            (
+                UscButton::Laser(kson::Side::Right, kson::Side::Right),
+                550.0,
+                300.0,
+            ),
+            (UscButton::Back, 300.0, 50.0),
+            (UscButton::Start, 250.0, 150.0),
+            (UscButton::BT(BtLane::A), 150.0, 250.0),
+            (UscButton::BT(BtLane::B), 250.0, 250.0),
+            (UscButton::BT(BtLane::C), 350.0, 250.0),
+            (UscButton::BT(BtLane::D), 450.0, 250.0),
+            (UscButton::FX(kson::Side::Left), 200.0, 350.0),
+            (UscButton::FX(kson::Side::Right), 400.0, 350.0),
+        ];
+
+        for (id, (button, x, y)) in cases.into_iter().enumerate() {
+            let mut helper = TouchHelper::new(screen_size);
+            let id = id as u64;
+
+            let (pressed, second_event) = helper
+                .update(&touch(id, TouchPhase::Started, x, y))
+                .unwrap_or_else(|| panic!("zone center should press {button:?}"));
+            assert_button_event(&pressed, button, ElementState::Pressed);
+            assert!(second_event.is_none());
+
+            let (released, second_event) = helper
+                .update(&touch(id, TouchPhase::Ended, x, y))
+                .unwrap_or_else(|| panic!("zone center should release {button:?}"));
+            assert_button_event(&released, button, ElementState::Released);
+            assert!(second_event.is_none());
+        }
+    }
+
+    #[test]
+    fn legacy_gap_point_remains_unmapped() {
+        let mut helper = TouchHelper::new(Vec2::new(600.0, 400.0));
+
+        assert!(helper
+            .update(&touch(1, TouchPhase::Started, 450.0, 150.0))
+            .is_none());
+        assert!(helper
+            .update(&touch(1, TouchPhase::Ended, 450.0, 150.0))
+            .is_none());
     }
 }
